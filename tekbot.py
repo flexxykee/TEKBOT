@@ -44,6 +44,7 @@ async def szolgálat(interaction: discord.Interaction, művelet: str):
             return
         aktiv_szolgalat_kezdete[user_id] = now
         await interaction.response.send_message(f"✅ {interaction.user.mention} szolgálatba lépett.")
+
     elif művelet.lower() == "leadás":
         if user_id not in aktiv_szolgalat_kezdete:
             await interaction.response.send_message("❗ Nem vagy szolgálatban!", ephemeral=True)
@@ -51,9 +52,15 @@ async def szolgálat(interaction: discord.Interaction, művelet: str):
         kezdes = aktiv_szolgalat_kezdete.pop(user_id)
         eltelt = now - kezdes
         szolgalati_idok[user_id] = szolgalati_idok.get(user_id, 0) + eltelt
-        await interaction.response.send_message(f"✅ {interaction.user.mention} szolgálatot leadta. Eltöltött idő: {int(eltelt)} másodperc.")
+        await interaction.response.send_message(
+            f"✅ {interaction.user.mention} szolgálatot leadta. Eltöltött idő: {int(eltelt)} másodperc."
+        )
+
     else:
-        await interaction.response.send_message("⚠️ Érvénytelen művelet. Használat: felvétel vagy leadás.", ephemeral=True)
+        await interaction.response.send_message(
+            "⚠️ Érvénytelen művelet. Használat: felvétel vagy leadás.",
+            ephemeral=True
+        )
 
 @szolgálat.autocomplete("művelet")
 async def autocomplete_művelet(interaction: discord.Interaction, current: str):
@@ -76,17 +83,39 @@ async def szolgálat_leaderboard(interaction: discord.Interaction):
         mp = int(seconds % 60)
         leaderboard.append(f"{i}. <@{user_id}> - {perc} perc {mp} mp")
 
-    await interaction.response.send_message("🏆 Szolgálati leaderboard:\n" + "\n".join(leaderboard))
+    await interaction.response.send_message(
+        "🏆 Szolgálati leaderboard:\n" + "\n".join(leaderboard)
+    )
 
 @bot.tree.command(name="újraindít", description="Bot újraindítása (csak tulajnak)")
 async def ujraindit(interaction: discord.Interaction):
     if interaction.user.id != bot_owner_id:
-        await interaction.response.send_message("🚫 Nincs jogosultságod újraindítani a botot.", ephemeral=True)
+        await interaction.response.send_message(
+            "🚫 Nincs jogosultságod újraindítani a botot.",
+            ephemeral=True
+        )
         return
 
     await interaction.response.send_message("🔁 Újraindítás...", ephemeral=True)
     await bot.close()
     os.execv(sys.executable, [sys.executable] + sys.argv)
+
+# 🔴 IDEIGLENES RESET PARANCS
+@bot.tree.command(name="reset", description="Szolgálati idők nullázása (csak tulajnak)")
+async def reset(interaction: discord.Interaction):
+    if interaction.user.id != bot_owner_id:
+        await interaction.response.send_message(
+            "🚫 Nincs jogosultságod a resethez.",
+            ephemeral=True
+        )
+        return
+
+    szolgalati_idok.clear()
+    aktiv_szolgalat_kezdete.clear()
+    await interaction.response.send_message(
+        "🗑️ Minden szolgálati idő törölve lett.",
+        ephemeral=True
+    )
 
 # Bot indítása
 bot.run(BOT_TOKEN)
