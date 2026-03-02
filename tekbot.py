@@ -27,7 +27,7 @@ bot_owner_id = 1125866681860894780
 
 @bot.event
 async def on_ready():
-    GUILD_ID = 1379472816008593650
+    GUILD_ID = 1476755863610986546
     guild = discord.Object(id=GUILD_ID)
     await bot.tree.sync(guild=guild)
     print(f'✅ Bejelentkezve mint {bot.user}, slash parancsok szinkronizálva.')
@@ -119,3 +119,4 @@ async def reset(interaction: discord.Interaction):
 
 # Bot indítása
 bot.run(BOT_TOKEN)
+
