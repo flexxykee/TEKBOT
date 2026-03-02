@@ -1,4 +1,21 @@
-import discord
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+def keep_alive():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, format, *args):
+            return
+
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+
+threading.Thread(target=keep_alive, daemon=True).start()import discord
 from discord import app_commands
 from discord.ext import commands
 import os
@@ -119,4 +136,5 @@ async def reset(interaction: discord.Interaction):
 
 # Bot indítása
 bot.run(BOT_TOKEN)
+
 
