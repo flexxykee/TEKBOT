@@ -15,22 +15,7 @@ load_dotenv()
 # Token betöltése Render / .env-ből
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# --- Mini webserver, hogy a Render Web Service ne állítsa le (portot nyitunk) ---
-def keep_alive():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
 
-        def log_message(self, format, *args):
-            return
-
-    port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    server.serve_forever()
-
-threading.Thread(target=keep_alive, daemon=True).start()
 # ------------------------------------------------------------------------------
 
 # Discord bot beállítások
@@ -136,5 +121,6 @@ if not BOT_TOKEN:
     raise RuntimeError("DISCORD_TOKEN nincs beállítva Render Environment Variables-ben!")
 
 bot.run(BOT_TOKEN)
+
 
 
