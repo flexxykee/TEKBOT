@@ -1,27 +1,16 @@
-# fly.toml app configuration file generated for tekbot on 2026-03-03T16:52:37Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'tekbot'
-primary_region = 'iad'
+app = "tekbot"
+primary_region = "iad"
 
 [build]
-  builder = 'paketobuildpacks/builder:base'
+builder = "paketobuildpacks/builder:base"
 
 [env]
-  PORT = '8080'
+PYTHONUNBUFFERED = "1"
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+[processes]
+app = "python tekbot.py"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 1024
+cpu_kind = "shared"
+cpus = 1
+memory_mb = 512
