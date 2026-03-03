@@ -1,0 +1,16 @@
+app = "tekbot"
+primary_region = "iad"
+
+[build]
+builder = "paketobuildpacks/builder:base"
+
+[env]
+PYTHONUNBUFFERED = "1"
+
+[processes]
+app = "python tekbot.py"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory_mb = 512
