@@ -47,7 +47,7 @@ bot_owner_id = 1125866681860894780
 
 @bot.event
 async def on_ready():
-    GUILD_ID = 1476755863610986546
+    GUILD_ID = 1355655504936042587
     guild = discord.Object(id=GUILD_ID)
 
     # Ha nincs hozzáférés (rossz szerver ID / nincs bent a bot), ne omoljon össze miatta:
@@ -136,3 +136,4 @@ if not BOT_TOKEN:
     raise RuntimeError("DISCORD_TOKEN nincs beállítva Render Environment Variables-ben!")
 
 bot.run(BOT_TOKEN)
+
