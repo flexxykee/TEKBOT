@@ -17,14 +17,16 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# SQLite adatbázis
-# Fly.io-n a fly.toml-ban:
+# Fly.io volume:
 # DB_PATH = "/data/duty.db"
+#
+# Lokálisan:
+# duty.db
 DB_PATH = os.getenv("DB_PATH", "duty.db")
 
 
 # ============================================================
-# ENGEDÉLYEZETT SZERVEREK
+# ENGEDÉLYEZETT DISCORD SZERVEREK
 # ============================================================
 
 ALLOWED_GUILDS = {
@@ -37,13 +39,13 @@ ALLOWED_GUILDS = {
 # JOGOSULTSÁGOK
 # ============================================================
 
-# /reset használhatja:
+# /reset használatára jogosult felhasználók
 RESET_ALLOWED_USERS = {
     1125866681860894780,
     747749105346019338,
 }
 
-# /ujraindit használhatja:
+# /ujraindit használatára csak ez a felhasználó jogosult
 RESTART_ALLOWED_USERS = {
     1125866681860894780,
 }
@@ -210,17 +212,17 @@ def reset_database():
 def format_ido(seconds: float) -> str:
     seconds = max(0, int(seconds))
 
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    sec = seconds % 60
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
 
-    if h > 0:
-        return f"{h} óra {m} perc {sec} mp"
+    if hours > 0:
+        return f"{hours} óra {minutes} perc {secs} mp"
 
-    if m > 0:
-        return f"{m} perc {sec} mp"
+    if minutes > 0:
+        return f"{minutes} perc {secs} mp"
 
-    return f"{sec} mp"
+    return f"{secs} mp"
 
 
 def guild_allowed(interaction: discord.Interaction) -> bool:
@@ -234,13 +236,9 @@ def guild_allowed(interaction: discord.Interaction) -> bool:
 # /SZOLGALAT
 # ============================================================
 
-@app_commands.guilds(
-    discord.Object(id=1542483166932246620),
-    discord.Object(id=1535743519220830361)
-)
 @app_commands.command(
     name="szolgalat",
-    description="Szolgálat felvétele vagy leadása"
+    description="Szolgálat felvétele, leadása vagy információ"
 )
 @app_commands.choices(muvelet=[
     app_commands.Choice(
@@ -251,13 +249,20 @@ def guild_allowed(interaction: discord.Interaction) -> bool:
         name="leadas",
         value="leadas"
     ),
+    app_commands.Choice(
+        name="info",
+        value="info"
+    ),
 ])
 async def szolgalat(
     interaction: discord.Interaction,
     muvelet: app_commands.Choice[str]
 ):
 
-    # Extra védelem
+    # --------------------------------------------------------
+    # SZERVER ELLENŐRZÉS
+    # --------------------------------------------------------
+
     if not guild_allowed(interaction):
         await interaction.response.send_message(
             "🚫 Ez a bot ezen a szerveren nem használható.",
@@ -306,10 +311,8 @@ async def szolgalat(
 
         elapsed = now - start
 
-        # Szolgálati idő hozzáadása
         add_total_time(user_id, elapsed)
 
-        # Aktív szolgálat törlése
         stop_duty(user_id)
 
         total_time = get_total_time(user_id)
@@ -320,76 +323,51 @@ async def szolgalat(
             f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
         )
 
+    # ========================================================
+    # SZOLGÁLAT INFO
+    # ========================================================
 
-# ============================================================
-# /SZOLGALAT INFO
-# ============================================================
+    elif muvelet.value == "info":
 
-@app_commands.guilds(
-    discord.Object(id=1542483166932246620),
-    discord.Object(id=1535743519220830361)
-)
-@app_commands.command(
-    name="szolgalat_info",
-    description="Megmutatja, kik vannak jelenleg szolgálatban"
-)
-async def szolgalat_info(
-    interaction: discord.Interaction
-):
+        active_users = get_active_users()
 
-    # Extra védelem
-    if not guild_allowed(interaction):
+        if not active_users:
+            await interaction.response.send_message(
+                "📭 Jelenleg senki nincs szolgálatban."
+            )
+            return
+
+        lines = []
+
+        for row in active_users:
+
+            uid = row["user_id"]
+            start_time = float(row["start_time"])
+
+            elapsed = now - start_time
+
+            member = interaction.guild.get_member(uid)
+
+            if member:
+                name = member.mention
+            else:
+                name = f"<@{uid}>"
+
+            lines.append(
+                f"🟢 {name} — **{format_ido(elapsed)}**"
+            )
+
         await interaction.response.send_message(
-            "🚫 Ez a bot ezen a szerveren nem használható.",
-            ephemeral=True
+            "👮 **Jelenleg szolgálatban:**\n\n" +
+            "\n".join(lines)
         )
-        return
-
-    active_users = get_active_users()
-
-    if not active_users:
-        await interaction.response.send_message(
-            "📭 Jelenleg senki nincs szolgálatban."
-        )
-        return
-
-    lines = []
-
-    now = time.time()
-
-    for row in active_users:
-
-        user_id = row["user_id"]
-        start_time = float(row["start_time"])
-
-        elapsed = now - start_time
-
-        member = interaction.guild.get_member(user_id)
-
-        if member:
-            name = member.mention
-        else:
-            name = f"<@{user_id}>"
-
-        lines.append(
-            f"🟢 {name} — **{format_ido(elapsed)}**"
-        )
-
-    await interaction.response.send_message(
-        "👮 **Jelenleg szolgálatban:**\n\n" +
-        "\n".join(lines)
-    )
 
 
 # ============================================================
 # /LEADERBOARD
 # ============================================================
 
-@app_commands.guilds(
-    discord.Object(id=1542483166932246620),
-    discord.Object(id=1535743519220830361)
-)
-@app_commands.command(
+@bot.tree.command(
     name="leaderboard",
     description="Szolgálati idő ranglista"
 )
@@ -397,7 +375,6 @@ async def leaderboard(
     interaction: discord.Interaction
 ):
 
-    # Extra védelem
     if not guild_allowed(interaction):
         await interaction.response.send_message(
             "🚫 Ez a bot ezen a szerveren nem használható.",
@@ -443,19 +420,15 @@ async def leaderboard(
 # /RESET
 # ============================================================
 
-@app_commands.guilds(
-    discord.Object(id=1542483166932246620),
-    discord.Object(id=1535743519220830361)
-)
-@app_commands.command(
+@bot.tree.command(
     name="reset",
-    description="Minden szolgálati idő törlése"
+    description="Minden szolgálati idő és aktív szolgálat törlése"
 )
 async def reset(
     interaction: discord.Interaction
 ):
 
-    # Szerver ellenőrzés
+    # Csak engedélyezett szerveren
     if not guild_allowed(interaction):
         await interaction.response.send_message(
             "🚫 Ez a bot ezen a szerveren nem használható.",
@@ -463,7 +436,7 @@ async def reset(
         )
         return
 
-    # Felhasználó ellenőrzés
+    # Csak a két meghatározott felhasználó
     if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
             "🚫 Nincs jogosultságod a /reset használatához.",
@@ -483,11 +456,7 @@ async def reset(
 # /UJRAINDIT
 # ============================================================
 
-@app_commands.guilds(
-    discord.Object(id=1542483166932246620),
-    discord.Object(id=1535743519220830361)
-)
-@app_commands.command(
+@bot.tree.command(
     name="ujraindit",
     description="Bot újraindítása"
 )
@@ -495,7 +464,7 @@ async def ujraindit(
     interaction: discord.Interaction
 ):
 
-    # Szerver ellenőrzés
+    # Csak engedélyezett szerveren
     if not guild_allowed(interaction):
         await interaction.response.send_message(
             "🚫 Ez a bot ezen a szerveren nem használható.",
@@ -528,11 +497,8 @@ async def ujraindit(
 # PARANCSOK REGISZTRÁLÁSA
 # ============================================================
 
+# A /szolgalat parancsot hozzáadjuk a command tree-hez.
 bot.tree.add_command(szolgalat)
-bot.tree.add_command(szolgalat_info)
-bot.tree.add_command(leaderboard)
-bot.tree.add_command(reset)
-bot.tree.add_command(ujraindit)
 
 
 # ============================================================
@@ -544,49 +510,61 @@ async def on_ready():
 
     init_database()
 
-    guilds = [
-        discord.Object(id=1542483166932246620),
-        discord.Object(id=1535743519220830361),
-    ]
+    print(f"✅ Bejelentkezve mint {bot.user}")
+    print(f"💾 SQLite adatbázis: {DB_PATH}")
 
-    # A korábban globálisan regisztrált parancsok eltávolítása.
-    # Ez fontos, mert korábban globálisan voltak szinkronizálva.
-    bot.tree.clear_commands(guild=None)
+    # --------------------------------------------------------
+    # GLOBÁLIS PARANCSOK TÖRLÉSE
+    # --------------------------------------------------------
+    #
+    # Fontos:
+    # Korábban a parancsok globálisan lehettek regisztrálva.
+    # Ez eltávolítja őket a globális command listából.
+    #
+    # --------------------------------------------------------
 
     try:
-        await bot.tree.sync()
-    except Exception as e:
-        print(f"⚠️ Globális parancsok törlése sikertelen: {e}")
 
-    # A parancsok regisztrálása kizárólag a két engedélyezett szerverre.
-    for guild in guilds:
+        bot.tree.clear_commands(guild=None)
+
+        await bot.tree.sync()
+
+        print(
+            "🧹 Régi globális parancsok törölve."
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Globális parancsok törlése sikertelen: {e}"
+        )
+
+    # --------------------------------------------------------
+    # ENGEDÉLYEZETT SZERVEREK
+    # --------------------------------------------------------
+
+    for guild_id in ALLOWED_GUILDS:
+
+        guild = discord.Object(id=guild_id)
+
         try:
+
             await bot.tree.sync(guild=guild)
 
             print(
-                f"✅ Parancsok szinkronizálva: {guild.id}"
+                f"✅ Parancsok szinkronizálva: {guild_id}"
             )
 
         except Exception as e:
+
             print(
                 f"❌ Parancs szinkronizálási hiba "
-                f"({guild.id}): {e}"
+                f"({guild_id}): {e}"
             )
 
     print(
-        f"✅ Bejelentkezve mint {bot.user}"
+        "🔒 A bot csak az engedélyezett szervereken használható."
     )
-
-    print(
-        f"💾 SQLite adatbázis: {DB_PATH}"
-    )
-
-    print(
-        "🔒 Engedélyezett szerverek:"
-    )
-
-    for guild_id in ALLOWED_GUILDS:
-        print(f"   - {guild_id}")
 
 
 # ============================================================
@@ -600,7 +578,9 @@ if not BOT_TOKEN or not BOT_TOKEN.strip():
     )
 
 
-# Adatbázis létrehozása még indulás előtt
+# Adatbázis inicializálása
 init_database()
 
+
+# Bot indítása
 bot.run(BOT_TOKEN.strip())
