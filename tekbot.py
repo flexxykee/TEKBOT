@@ -13,8 +13,21 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
+# ============================================================
+# BEÁLLÍTÁSOK
+# ============================================================
+
+# IDE ÍRD A SAJÁT DISCORD SZERVERED ID-JÁT
+# Példa:
+# ALLOWED_GUILD_ID = 123456789012345678
+
+ALLOWED_GUILD_ID = 123456789012345678
+
+
 # SQLite adatbázis helye
-# Fly.io volume esetén ezt a fly.toml-ban fogjuk beállítani.
+# Fly.io esetén a fly.toml:
+# DB_PATH = "/data/duty.db"
+
 DB_PATH = os.getenv("DB_PATH", "duty.db")
 
 
@@ -119,6 +132,20 @@ def stop_duty(user_id: int):
     conn.close()
 
 
+def get_active_users():
+    conn = get_db()
+
+    rows = conn.execute("""
+        SELECT user_id, start_time
+        FROM active_duty
+        ORDER BY start_time ASC
+    """).fetchall()
+
+    conn.close()
+
+    return rows
+
+
 def get_leaderboard():
     conn = get_db()
 
@@ -165,7 +192,14 @@ def format_ido(seconds: float) -> str:
     return f"{sec} mp"
 
 
-async def is_server_owner(interaction: discord.Interaction) -> bool:
+def is_allowed_guild(interaction: discord.Interaction) -> bool:
+    return (
+        interaction.guild is not None
+        and interaction.guild.id == ALLOWED_GUILD_ID
+    )
+
+
+def is_server_owner(interaction: discord.Interaction) -> bool:
     if interaction.guild is None:
         return False
 
@@ -176,10 +210,8 @@ async def is_server_owner(interaction: discord.Interaction) -> bool:
 # DISCORD BOT
 # ============================================================
 
-# Slash parancsokhoz nem kell message_content intent
 intents = discord.Intents.default()
 
-# Prefixet ne "/"-ra tedd, mert összekeveri a slash-sel
 bot = commands.Bot(
     command_prefix="!",
     intents=intents
@@ -192,6 +224,7 @@ bot = commands.Bot(
 
 @bot.event
 async def on_ready():
+
     init_database()
 
     await bot.tree.sync()
@@ -202,84 +235,164 @@ async def on_ready():
     )
 
     print(f"💾 SQLite adatbázis: {DB_PATH}")
+    print(f"🔒 Engedélyezett szerver ID: {ALLOWED_GUILD_ID}")
 
 
 # ============================================================
 # /szolgalat
 # ============================================================
 
-@bot.tree.command(
+szolgalat_group = app_commands.Group(
     name="szolgalat",
-    description="Szolgálat felvétele vagy leadása"
+    description="Szolgálati rendszer"
 )
-@app_commands.choices(muvelet=[
-    app_commands.Choice(
-        name="felvetel",
-        value="felvetel"
-    ),
-    app_commands.Choice(
-        name="leadas",
-        value="leadas"
-    ),
-])
-async def szolgalat(
-    interaction: discord.Interaction,
-    muvelet: app_commands.Choice[str]
-):
+
+
+# ============================================================
+# /szolgalat felvetel
+# ============================================================
+
+@szolgalat_group.command(
+    name="felvetel",
+    description="Szolgálat felvétele"
+)
+async def szolgalat_felvetel(interaction: discord.Interaction):
+
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
+
     user_id = interaction.user.id
     now = time.time()
 
-    # ========================================================
-    # SZOLGÁLAT FELVÉTEL
-    # ========================================================
+    active_start = get_active_start(user_id)
 
-    if muvelet.value == "felvetel":
-
-        active_start = get_active_start(user_id)
-
-        if active_start is not None:
-            await interaction.response.send_message(
-                "❗ Már szolgálatban vagy.",
-                ephemeral=True
-            )
-            return
-
-        start_duty(user_id, now)
-
+    if active_start is not None:
         await interaction.response.send_message(
-            f"✅ {interaction.user.mention} szolgálatba lépett."
+            "❗ Már szolgálatban vagy.",
+            ephemeral=True
+        )
+        return
+
+    start_duty(user_id, now)
+
+    await interaction.response.send_message(
+        f"✅ {interaction.user.mention} szolgálatba lépett."
+    )
+
+
+# ============================================================
+# /szolgalat leadas
+# ============================================================
+
+@szolgalat_group.command(
+    name="leadas",
+    description="Szolgálat leadása"
+)
+async def szolgalat_leadas(interaction: discord.Interaction):
+
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
+
+    user_id = interaction.user.id
+    now = time.time()
+
+    start = get_active_start(user_id)
+
+    if start is None:
+        await interaction.response.send_message(
+            "❗ Nem vagy szolgálatban.",
+            ephemeral=True
+        )
+        return
+
+    eltelt = now - start
+
+    add_total_time(user_id, eltelt)
+    stop_duty(user_id)
+
+    total_time = get_total_time(user_id)
+
+    await interaction.response.send_message(
+        f"✅ {interaction.user.mention} szolgálatot leadta.\n"
+        f"⏱️ Eltöltött idő: **{format_ido(eltelt)}**\n"
+        f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
+    )
+
+
+# ============================================================
+# /szolgalat info
+# ============================================================
+
+@szolgalat_group.command(
+    name="info",
+    description="Megmutatja, kik vannak jelenleg szolgálatban"
+)
+async def szolgalat_info(interaction: discord.Interaction):
+
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
+
+    rows = get_active_users()
+
+    if not rows:
+        await interaction.response.send_message(
+            "📭 Jelenleg senki nincs szolgálatban."
+        )
+        return
+
+    now = time.time()
+
+    lines = []
+
+    for row in rows:
+        user_id = row["user_id"]
+        start_time = float(row["start_time"])
+
+        elapsed = now - start_time
+
+        member = interaction.guild.get_member(user_id)
+
+        if member is not None:
+            name = member.mention
+        else:
+            name = f"<@{user_id}>"
+
+        lines.append(
+            f"👮 {name} — **{format_ido(elapsed)}**"
         )
 
-    # ========================================================
-    # SZOLGÁLAT LEADÁS
-    # ========================================================
+    embed = discord.Embed(
+        title="👮 Jelenleg szolgálatban",
+        description="\n".join(lines),
+        color=discord.Color.blue()
+    )
 
-    elif muvelet.value == "leadas":
+    embed.set_footer(
+        text=f"Összes szolgálatban lévő személy: {len(rows)}"
+    )
 
-        start = get_active_start(user_id)
+    await interaction.response.send_message(
+        embed=embed
+    )
 
-        if start is None:
-            await interaction.response.send_message(
-                "❗ Nem vagy szolgálatban.",
-                ephemeral=True
-            )
-            return
 
-        eltelt = now - start
+# ============================================================
+# /szolgalat CSOPORT REGISZTRÁLÁSA
+# ============================================================
 
-        # Szolgálati idő hozzáadása
-        add_total_time(user_id, eltelt)
-
-        # Aktív szolgálat törlése
-        stop_duty(user_id)
-
-        total_time = get_total_time(user_id)
-
-        await interaction.response.send_message(
-            f"✅ {interaction.user.mention} szolgálatot leadta.\n"
-            f"⏱️ Eltöltött idő: **{format_ido(eltelt)}**\n"
-            f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
-        )
+bot.tree.add_command(szolgalat_group)
 
 
 # ============================================================
@@ -291,6 +404,13 @@ async def szolgalat(
     description="Szolgálati idő ranglista"
 )
 async def leaderboard(interaction: discord.Interaction):
+
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
 
     rows = get_leaderboard()
 
@@ -335,7 +455,14 @@ async def leaderboard(interaction: discord.Interaction):
 )
 async def reset(interaction: discord.Interaction):
 
-    if not await is_server_owner(interaction):
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
+
+    if not is_server_owner(interaction):
         await interaction.response.send_message(
             "🚫 Csak a szerver tulajdonosa használhatja.",
             ephemeral=True
@@ -360,7 +487,14 @@ async def reset(interaction: discord.Interaction):
 )
 async def ujraindit(interaction: discord.Interaction):
 
-    if not await is_server_owner(interaction):
+    if not is_allowed_guild(interaction):
+        await interaction.response.send_message(
+            "🚫 Ez a bot ezen a szerveren nem használható.",
+            ephemeral=True
+        )
+        return
+
+    if not is_server_owner(interaction):
         await interaction.response.send_message(
             "🚫 Csak a szerver tulajdonosa használhatja.",
             ephemeral=True
@@ -390,7 +524,6 @@ if not BOT_TOKEN or not BOT_TOKEN.strip():
         "(Secrets / Environment Variables)."
     )
 
-# Adatbázis létrehozása még a bot indítása előtt
 init_database()
 
 bot.run(BOT_TOKEN.strip())
