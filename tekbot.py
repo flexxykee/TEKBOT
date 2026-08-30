@@ -5,7 +5,7 @@ import sqlite3
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 
@@ -17,35 +17,37 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Fly.io volume:
-# DB_PATH = "/data/duty.db"
-#
-# Lokálisan:
-# duty.db
+# Fly.io volume
+# Fly-on: /data/duty.db
+# Lokálisan: duty.db
 DB_PATH = os.getenv("DB_PATH", "duty.db")
 
 
 # ============================================================
-# ENGEDÉLYEZETT DISCORD SZERVEREK
+# CSATORNÁK
 # ============================================================
 
-ALLOWED_GUILDS = {
-    1542483166932246620,  # TESZT SZERVER
-    1535743519220830361,  # ÉLES SZERVER
-}
+# A normál parancsok csak ebben a csatornában használhatók.
+COMMAND_CHANNEL_ID = 1543671340769480816
+
+# Ide kerül a folyamatosan frissülő szolgálati lista.
+# EZT ÁLLÍTSD ÁT A SZOLGÁLATI SZOBA ID-JÁRA!
+INFO_CHANNEL_ID = 1543671340769480816
 
 
 # ============================================================
 # JOGOSULTSÁGOK
 # ============================================================
 
-# /reset használatára jogosult felhasználók
+# Ezek a felhasználók minden csatornából használhatják
+# a parancsokat, és a speciális adminisztrációs parancsokra
+# is jogosultak.
 RESET_ALLOWED_USERS = {
     1125866681860894780,
     747749105346019338,
 }
 
-# /ujraindit használatára csak ez a felhasználó jogosult
+# /ujraindit használatára csak ez a felhasználó jogosult.
 RESTART_ALLOWED_USERS = {
     1125866681860894780,
 }
@@ -225,11 +227,18 @@ def format_ido(seconds: float) -> str:
     return f"{secs} mp"
 
 
-def guild_allowed(interaction: discord.Interaction) -> bool:
-    if interaction.guild is None:
-        return False
+def channel_allowed(interaction: discord.Interaction) -> bool:
+    """
+    A két kiemelt felhasználó minden csatornából használhatja
+    a parancsokat.
 
-    return interaction.guild.id in ALLOWED_GUILDS
+    Mindenki más csak a COMMAND_CHANNEL_ID csatornában.
+    """
+
+    if interaction.user.id in RESET_ALLOWED_USERS:
+        return True
+
+    return interaction.channel_id == COMMAND_CHANNEL_ID
 
 
 # ============================================================
@@ -238,7 +247,7 @@ def guild_allowed(interaction: discord.Interaction) -> bool:
 
 @app_commands.command(
     name="szolgalat",
-    description="Szolgálat felvétele, leadása vagy információ"
+    description="Szolgálat felvétele vagy leadása"
 )
 @app_commands.choices(muvelet=[
     app_commands.Choice(
@@ -249,23 +258,16 @@ def guild_allowed(interaction: discord.Interaction) -> bool:
         name="leadas",
         value="leadas"
     ),
-    app_commands.Choice(
-        name="info",
-        value="info"
-    ),
 ])
 async def szolgalat(
     interaction: discord.Interaction,
     muvelet: app_commands.Choice[str]
 ):
 
-    # --------------------------------------------------------
-    # SZERVER ELLENŐRZÉS
-    # --------------------------------------------------------
-
-    if not guild_allowed(interaction):
+    # Csatorna ellenőrzés
+    if not channel_allowed(interaction):
         await interaction.response.send_message(
-            "🚫 Ez a bot ezen a szerveren nem használható.",
+            "🚫 A parancsokat csak a kijelölt szolgálati csatornában használhatod.",
             ephemeral=True
         )
         return
@@ -294,6 +296,8 @@ async def szolgalat(
             f"✅ {interaction.user.mention} szolgálatba lépett."
         )
 
+        await update_info_channel()
+
     # ========================================================
     # SZOLGÁLAT LEADÁS
     # ========================================================
@@ -312,7 +316,6 @@ async def szolgalat(
         elapsed = now - start
 
         add_total_time(user_id, elapsed)
-
         stop_duty(user_id)
 
         total_time = get_total_time(user_id)
@@ -323,44 +326,107 @@ async def szolgalat(
             f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
         )
 
-    # ========================================================
-    # SZOLGÁLAT INFO
-    # ========================================================
+        await update_info_channel()
 
-    elif muvelet.value == "info":
 
-        active_users = get_active_users()
+# ============================================================
+# /SZOLGALAT_KIVESZ
+# ============================================================
 
-        if not active_users:
-            await interaction.response.send_message(
-                "📭 Jelenleg senki nincs szolgálatban."
-            )
-            return
+@bot.tree.command(
+    name="szolgalat_kivesz",
+    description="Egy személy kivétele az aktív szolgálatból"
+)
+@app_commands.describe(
+    felhasznalo="Az a személy, akit ki szeretnél venni szolgálatból"
+)
+async def szolgalat_kivesz(
+    interaction: discord.Interaction,
+    felhasznalo: discord.Member
+):
 
-        lines = []
-
-        for row in active_users:
-
-            uid = row["user_id"]
-            start_time = float(row["start_time"])
-
-            elapsed = now - start_time
-
-            member = interaction.guild.get_member(uid)
-
-            if member:
-                name = member.mention
-            else:
-                name = f"<@{uid}>"
-
-            lines.append(
-                f"🟢 {name} — **{format_ido(elapsed)}**"
-            )
-
+    # Csak a két meghatározott felhasználó
+    if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
-            "👮 **Jelenleg szolgálatban:**\n\n" +
-            "\n".join(lines)
+            "🚫 Nincs jogosultságod a /szolgalat_kivesz használatához.",
+            ephemeral=True
         )
+        return
+
+    user_id = felhasznalo.id
+    start = get_active_start(user_id)
+
+    if start is None:
+        await interaction.response.send_message(
+            f"❗ {felhasznalo.mention} jelenleg nincs szolgálatban.",
+            ephemeral=True
+        )
+        return
+
+    now = time.time()
+    elapsed = now - start
+
+    # Aktív idő hozzáadása az összesített időhöz
+    add_total_time(user_id, elapsed)
+
+    # Szolgálat lezárása
+    stop_duty(user_id)
+
+    total_time = get_total_time(user_id)
+
+    await interaction.response.send_message(
+        f"⛔ {felhasznalo.mention} ki lett véve a szolgálatból.\n"
+        f"⏱️ Aktív szolgálati idő: **{format_ido(elapsed)}**\n"
+        f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
+    )
+
+    await update_info_channel()
+
+
+# ============================================================
+# /SZOLGALAT_HOZZAAD
+# ============================================================
+
+@bot.tree.command(
+    name="szolgalat_hozzaad",
+    description="Szolgálati idő hozzáadása egy személyhez"
+)
+@app_commands.describe(
+    felhasznalo="Az a személy, akinek időt szeretnél hozzáadni",
+    perc="Hozzáadandó szolgálati idő percben"
+)
+async def szolgalat_hozzaad(
+    interaction: discord.Interaction,
+    felhasznalo: discord.Member,
+    perc: int
+):
+
+    # Csak a két meghatározott felhasználó
+    if interaction.user.id not in RESET_ALLOWED_USERS:
+        await interaction.response.send_message(
+            "🚫 Nincs jogosultságod a /szolgalat_hozzaad használatához.",
+            ephemeral=True
+        )
+        return
+
+    if perc <= 0:
+        await interaction.response.send_message(
+            "❗ A hozzáadandó percnek legalább 1-nek kell lennie.",
+            ephemeral=True
+        )
+        return
+
+    seconds = perc * 60
+
+    add_total_time(felhasznalo.id, seconds)
+
+    total_time = get_total_time(felhasznalo.id)
+
+    await interaction.response.send_message(
+        f"➕ {felhasznalo.mention} szolgálati idejéhez "
+        f"**{perc} perc** hozzáadva.\n"
+        f"📊 Összes szolgálati idő: **{format_ido(total_time)}**"
+    )
 
 
 # ============================================================
@@ -375,9 +441,10 @@ async def leaderboard(
     interaction: discord.Interaction
 ):
 
-    if not guild_allowed(interaction):
+    # Csatorna ellenőrzés
+    if not channel_allowed(interaction):
         await interaction.response.send_message(
-            "🚫 Ez a bot ezen a szerveren nem használható.",
+            "🚫 A parancsokat csak a kijelölt szolgálati csatornában használhatod.",
             ephemeral=True
         )
         return
@@ -428,14 +495,6 @@ async def reset(
     interaction: discord.Interaction
 ):
 
-    # Csak engedélyezett szerveren
-    if not guild_allowed(interaction):
-        await interaction.response.send_message(
-            "🚫 Ez a bot ezen a szerveren nem használható.",
-            ephemeral=True
-        )
-        return
-
     # Csak a két meghatározott felhasználó
     if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
@@ -451,6 +510,8 @@ async def reset(
         ephemeral=True
     )
 
+    await update_info_channel()
+
 
 # ============================================================
 # /UJRAINDIT
@@ -464,15 +525,7 @@ async def ujraindit(
     interaction: discord.Interaction
 ):
 
-    # Csak engedélyezett szerveren
-    if not guild_allowed(interaction):
-        await interaction.response.send_message(
-            "🚫 Ez a bot ezen a szerveren nem használható.",
-            ephemeral=True
-        )
-        return
-
-    # Csak te használhatod
+    # Csak ez a felhasználó
     if interaction.user.id not in RESTART_ALLOWED_USERS:
         await interaction.response.send_message(
             "🚫 Nincs jogosultságod a /ujraindit használatához.",
@@ -494,11 +547,127 @@ async def ujraindit(
 
 
 # ============================================================
-# PARANCSOK REGISZTRÁLÁSA
+# /SZOLGALAT PARANCS HOZZÁADÁSA
 # ============================================================
 
-# A /szolgalat parancsot hozzáadjuk a command tree-hez.
 bot.tree.add_command(szolgalat)
+
+
+# ============================================================
+# SZOLGÁLATI INFO CSATORNA
+# ============================================================
+
+info_message = None
+
+
+async def update_info_channel():
+    """
+    Folyamatosan frissíti a szolgálati információs üzenetet.
+    """
+
+    global info_message
+
+    channel = bot.get_channel(INFO_CHANNEL_ID)
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(INFO_CHANNEL_ID)
+        except Exception as e:
+            print(
+                f"❌ Információs csatorna nem található: {e}"
+            )
+            return
+
+    if not isinstance(channel, discord.TextChannel):
+        print("❌ Az INFO_CHANNEL_ID nem szöveges csatornára mutat.")
+        return
+
+    active_users = get_active_users()
+    now = time.time()
+
+    lines = []
+
+    for row in active_users:
+
+        uid = row["user_id"]
+        start_time = float(row["start_time"])
+
+        elapsed = now - start_time
+
+        member = channel.guild.get_member(uid)
+
+        if member:
+            name = member.mention
+        else:
+            name = f"<@{uid}>"
+
+        lines.append(
+            f"🟢 {name} — **{format_ido(elapsed)}**"
+        )
+
+    if lines:
+
+        content = (
+            "👮 **JELENLEG SZOLGÁLATBAN**\n\n"
+            + "\n".join(lines)
+            + "\n\n"
+            "🔄 Az információ automatikusan frissül."
+        )
+
+    else:
+
+        content = (
+            "👮 **JELENLEG SZOLGÁLATBAN**\n\n"
+            "📭 Jelenleg senki nincs szolgálatban.\n\n"
+            "🔄 Az információ automatikusan frissül."
+        )
+
+    try:
+
+        if info_message is None:
+
+            # Utolsó bot üzenet keresése
+            async for message in channel.history(limit=20):
+
+                if (
+                    message.author == bot.user
+                    and message.embeds == []
+                ):
+                    info_message = message
+                    break
+
+        if info_message is None:
+
+            info_message = await channel.send(content)
+
+        else:
+
+            await info_message.edit(content=content)
+
+    except discord.NotFound:
+
+        info_message = await channel.send(content)
+
+    except discord.Forbidden:
+
+        print(
+            "❌ Nincs jogosultságom az információs csatornához."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Információs üzenet frissítési hiba: {e}"
+        )
+
+
+# ============================================================
+# AUTOMATIKUS INFO FRISSÍTÉS
+# ============================================================
+
+@tasks.loop(seconds=30)
+async def update_info_loop():
+    await update_info_channel()
 
 
 # ============================================================
@@ -512,58 +681,57 @@ async def on_ready():
 
     print(f"✅ Bejelentkezve mint {bot.user}")
     print(f"💾 SQLite adatbázis: {DB_PATH}")
+    print(
+        f"📢 Parancs csatorna: {COMMAND_CHANNEL_ID}"
+    )
+    print(
+        f"👮 Info csatorna: {INFO_CHANNEL_ID}"
+    )
 
     # --------------------------------------------------------
-    # GLOBÁLIS PARANCSOK TÖRLÉSE
-    # --------------------------------------------------------
-    #
-    # Fontos:
-    # Korábban a parancsok globálisan lehettek regisztrálva.
-    # Ez eltávolítja őket a globális command listából.
-    #
+    # GLOBÁLIS PARANCSOK SZINKRONIZÁLÁSA
     # --------------------------------------------------------
 
     try:
 
-        bot.tree.clear_commands(guild=None)
-
-        await bot.tree.sync()
+        synced = await bot.tree.sync()
 
         print(
-            "🧹 Régi globális parancsok törölve."
+            f"✅ Globálisan szinkronizált parancsok: {len(synced)}"
         )
+
+        for command in synced:
+            print(
+                f"   /{command.name}"
+            )
 
     except Exception as e:
 
         print(
-            f"⚠️ Globális parancsok törlése sikertelen: {e}"
+            f"❌ Globális parancs szinkronizálási hiba: {e}"
         )
 
     # --------------------------------------------------------
-    # ENGEDÉLYEZETT SZERVEREK
+    # INFO CSATORNA
     # --------------------------------------------------------
 
-    for guild_id in ALLOWED_GUILDS:
+    await update_info_channel()
 
-        guild = discord.Object(id=guild_id)
-
-        try:
-
-            await bot.tree.sync(guild=guild)
-
-            print(
-                f"✅ Parancsok szinkronizálva: {guild_id}"
-            )
-
-        except Exception as e:
-
-            print(
-                f"❌ Parancs szinkronizálási hiba "
-                f"({guild_id}): {e}"
-            )
+    if not update_info_loop.is_running():
+        update_info_loop.start()
 
     print(
-        "🔒 A bot csak az engedélyezett szervereken használható."
+        "🔒 A bot minden szerveren használható."
+    )
+
+    print(
+        "📢 Normál felhasználók csak a kijelölt csatornában "
+        "használhatják a parancsokat."
+    )
+
+    print(
+        "👑 A jogosult felhasználók minden csatornából "
+        "használhatják a parancsokat."
     )
 
 
