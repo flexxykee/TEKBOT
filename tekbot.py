@@ -31,7 +31,7 @@ DB_PATH = os.getenv("DB_PATH", "duty.db")
 COMMAND_CHANNEL_ID = 1543671340769480816
 
 # Ide kerül a folyamatosan frissülő szolgálati lista.
-# EZT ÁLLÍTSD ÁT A SZOLGÁLATI SZOBA ID-JÁRA!
+# 1543746903483744429
 INFO_CHANNEL_ID = 1543671340769480816
 
 
@@ -267,7 +267,7 @@ async def szolgalat(
     # Csatorna ellenőrzés
     if not channel_allowed(interaction):
         await interaction.response.send_message(
-            "🚫 A parancsokat csak a kijelölt szolgálati csatornában használhatod.",
+            "🚫 A parancsokat csak a #1543671340769480816 csatornában használhatod.",
             ephemeral=True
         )
         return
@@ -348,7 +348,7 @@ async def szolgalat_kivesz(
     # Csak a két meghatározott felhasználó
     if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
-            "🚫 Nincs jogosultságod a /szolgalat_kivesz használatához.",
+            "🚫 Nincs jogosultságod másokat kivenni a szolgálatból!",
             ephemeral=True
         )
         return
@@ -404,7 +404,7 @@ async def szolgalat_hozzaad(
     # Csak a két meghatározott felhasználó
     if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
-            "🚫 Nincs jogosultságod a /szolgalat_hozzaad használatához.",
+            "🚫 Nincs jogosultságod időt hozzáadni a felhasználóhoz!",
             ephemeral=True
         )
         return
@@ -444,7 +444,7 @@ async def leaderboard(
     # Csatorna ellenőrzés
     if not channel_allowed(interaction):
         await interaction.response.send_message(
-            "🚫 A parancsokat csak a kijelölt szolgálati csatornában használhatod.",
+            "🚫 A parancsokat csak a #1543671340769480816 csatornában használhatod.",
             ephemeral=True
         )
         return
@@ -498,7 +498,7 @@ async def reset(
     # Csak a két meghatározott felhasználó
     if interaction.user.id not in RESET_ALLOWED_USERS:
         await interaction.response.send_message(
-            "🚫 Nincs jogosultságod a /reset használatához.",
+            "🚫 Nincs jogosultságod törölni a szolgálati időket!",
             ephemeral=True
         )
         return
@@ -528,7 +528,7 @@ async def ujraindit(
     # Csak ez a felhasználó
     if interaction.user.id not in RESTART_ALLOWED_USERS:
         await interaction.response.send_message(
-            "🚫 Nincs jogosultságod a /ujraindit használatához.",
+            "🚫 Nincs jogosultságod az újraindításhoz!",
             ephemeral=True
         )
         return
